@@ -5,13 +5,9 @@ from flask import Flask, request, jsonify, Response
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import html
-import language_tool_python
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
-
-# Grammar correction tool (English)
-tool = language_tool_python.LanguageTool('en-US')
 
 
 def clean_html(soup):
@@ -111,18 +107,10 @@ def scrape_blog():
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # HTML string
+        # HTML string გაწმენდილი
         html_str = str(article).strip()
-        html_str = html_str.replace(u"\u00a0", " ")   # NBSP fix
-        html_str = html.unescape(html_str)            # decode &amp;, &#39;
-
-        # Grammar correction (optional – heavy for big texts)
-        soup = BeautifulSoup(html_str, "html.parser")
-        for tag in soup.find_all(text=True):
-            fixed = tool.correct(tag)
-            if fixed != tag:
-                tag.replace_with(fixed)
-        html_str = str(soup)
+        html_str = html_str.replace(u"\u00a0", " ")  # NBSP fix
+        html_str = html.unescape(html_str)           # decode &amp;, &#39; etc.
 
         images = extract_images(article, url)
 
