@@ -12,11 +12,25 @@ def clean_html(soup):
     for tag in soup(["style", "script"]):
         tag.decompose()
 
-    # წაშლის class, id და style ატრიბუტებს
+    # ყველა ელემენტიდან class, id, style და სხვა ზედმეტი ატრიბუტების წაშლა
     for tag in soup.find_all(True):
-        for attr in ["class", "id", "style"]:
-            if attr in tag.attrs:
-                del tag.attrs[attr]
+        if tag.name == "a":
+            # <a>-ს href მოიშოროს
+            if "href" in tag.attrs:
+                del tag.attrs["href"]
+        elif tag.name == "img":
+            # <img>-ზე დავტოვოთ მხოლოდ src და alt
+            keep = {}
+            if "src" in tag.attrs:
+                keep["src"] = tag["src"]
+            if "alt" in tag.attrs:
+                keep["alt"] = tag["alt"]
+            tag.attrs = keep
+        else:
+            # სხვა ელემენტებიდან class/id/style წაშლა
+            for attr in ["class", "id", "style", "srcset", "sizes", "loading", "decoding", "width", "height"]:
+                if attr in tag.attrs:
+                    del tag.attrs[attr]
 
     return soup
 
@@ -49,9 +63,7 @@ def extract_blog_content(html: str):
         for tag in article.select(sel):
             tag.decompose()
 
-    # საბოლოო გასუფთავება
-    article = clean_html(article)
-    return article
+    return clean_html(article)
 
 @app.route("/scrape-blog", methods=["POST"])
 def scrape_blog():
