@@ -1,7 +1,7 @@
 import os
 import logging
 import requests
-from flask import Flask, request, Response
+from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
@@ -37,7 +37,10 @@ def extract_blog_content(html: str):
         for tag in article.select(sel):
             tag.decompose()
 
-    # დარჩება სუფთა ბლოგის ბირთვი
+    # ❌ წავშალოთ ყველა inline style
+    for tag in article.find_all(style=True):
+        del tag["style"]
+
     return article
 
 @app.route("/scrape-blog", methods=["POST"])
@@ -46,21 +49,29 @@ def scrape_blog():
         data = request.get_json(force=True)
         url = data.get("url")
         if not url:
-            return Response("Missing 'url' field", status=400)
+            return jsonify({"error": "Missing 'url' field"}), 400
 
         resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
 
         article = extract_blog_content(resp.text)
         if not article:
-            return Response("Could not extract blog content", status=422)
+            return jsonify({"error": "Could not extract blog content"}), 422
 
+        # სუფთა HTML
         clean_html = str(article).strip()
-        return Response(clean_html, mimetype="text/html")
+
+        # სურათების ამოღება
+        images = [img.get("src") for img in article.find_all("img") if img.get("src")]
+
+        return jsonify({
+            "html": clean_html,
+            "images": images
+        })
 
     except Exception as e:
         logging.exception("Error scraping blog")
-        return Response(f"Error: {str(e)}", status=500)
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
