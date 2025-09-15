@@ -7,6 +7,45 @@ from bs4 import BeautifulSoup
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
+def clean_html(soup):
+    # წაშლის <style> და <script>
+    for tag in soup(["style", "script"]):
+        tag.decompose()
+
+    # base64 img → noscript fallback
+    for img in soup.find_all("img"):
+        src = img.get("src", "")
+        if src.startswith("data:image"):
+            # მოძებნე noscript შიგნით <img>
+            noscript = img.find_next_sibling("noscript")
+            if noscript:
+                ns_img = noscript.find("img")
+                if ns_img and ns_img.get("src", "").startswith("http"):
+                    img["src"] = ns_img["src"]
+                    img["alt"] = ns_img.get("alt", "Image")
+                else:
+                    img.decompose()
+            else:
+                img.decompose()
+
+    # ატრიბუტების გაწმენდა
+    for tag in soup.find_all(True):
+        if tag.name == "a":
+            if "href" in tag.attrs:
+                del tag.attrs["href"]
+
+        elif tag.name == "img":
+            src = tag.get("src")
+            alt = tag.get("alt", "").strip() or "Image"
+            tag.attrs = {"src": src, "alt": alt}
+
+        else:
+            for attr in list(tag.attrs.keys()):
+                if attr not in ["src", "alt"]:
+                    del tag.attrs[attr]
+
+    return soup
+
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
 
@@ -21,48 +60,26 @@ def extract_blog_content(html: str):
     if not article:
         article = soup.body
 
-    # ❌ წაშლის selectors – აქ შეგიძლია დაამატო რაც არ გინდა
+    # წასაშლელი selectors
     remove_selectors = [
-        "ul.entry-meta",           # ავტორი + თარიღი
-        "div.entry-tags",          # tags
-        "div.ct-share-box",        # share
-        "div.author-box",          # author bio
-        "nav.post-navigation",     # next/prev
-        "div.wp-block-buttons",    # CTA
-        "aside",                   # side widgets
-        "header .entry-meta",      # header meta
-        "footer"                   # footer
+        "ul.entry-meta",
+        "div.entry-tags",
+        "div.ct-share-box",
+        "div.author-box",
+        "nav.post-navigation",
+        "div.wp-block-buttons",
+        "aside",
+        "header .entry-meta",
+        "footer"
     ]
     for sel in remove_selectors:
         for tag in article.select(sel):
             tag.decompose()
 
+    # გაწმენდა (სტილი, base64 სურათები და ა.შ.)
+    article = clean_html(article)
+
     return article
-
-def clean_html(soup):
-    # წაშლის <style> და <script>
-    for tag in soup(["style", "script"]):
-        tag.decompose()
-
-    for tag in soup.find_all(True):
-        if tag.name == "a":
-            # მოვაშოროთ href, მაგრამ ტექსტი/შიდა ელემენტები დარჩეს
-            if "href" in tag.attrs:
-                del tag.attrs["href"]
-
-        elif tag.name == "img":
-            # დავტოვოთ მხოლოდ src და alt
-            src = tag.get("src")
-            alt = tag.get("alt", "").strip() or "Image"
-            tag.attrs = {"src": src, "alt": alt}
-
-        else:
-            # class, id, style და სხვა ზედმეტი ატრიბუტების წაშლა
-            for attr in list(tag.attrs.keys()):
-                if attr not in ["src", "alt"]:  # სურათის შემთხვევაში დავტოვებთ
-                    del tag.attrs[attr]
-
-    return soup
 
 @app.route("/scrape-blog", methods=["POST"])
 def scrape_blog():
@@ -79,10 +96,7 @@ def scrape_blog():
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # გაწმენდა
-        clean_article = clean_html(article)
-
-        clean_html_str = str(clean_article).strip()
+        clean_html_str = str(article).strip()
         return Response(clean_html_str, mimetype="text/html")
 
     except Exception as e:
