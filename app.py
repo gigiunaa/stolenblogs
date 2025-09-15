@@ -7,47 +7,21 @@ from bs4 import BeautifulSoup
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-def clean_html(soup):
-    # წაშლის ყველა <style> და <script>
-    for tag in soup(["style", "script"]):
-        tag.decompose()
-
-    # ყველა ელემენტიდან class, id, style და სხვა ზედმეტი ატრიბუტების წაშლა
-    for tag in soup.find_all(True):
-        if tag.name == "a":
-            # <a>-ს href მოიშოროს
-            if "href" in tag.attrs:
-                del tag.attrs["href"]
-        elif tag.name == "img":
-            # <img>-ზე დავტოვოთ მხოლოდ src და alt
-            keep = {}
-            if "src" in tag.attrs:
-                keep["src"] = tag["src"]
-            if "alt" in tag.attrs:
-                keep["alt"] = tag["alt"]
-            tag.attrs = keep
-        else:
-            # სხვა ელემენტებიდან class/id/style წაშლა
-            for attr in ["class", "id", "style", "srcset", "sizes", "loading", "decoding", "width", "height"]:
-                if attr in tag.attrs:
-                    del tag.attrs[attr]
-
-    return soup
-
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
 
-    # მოძებნე article ან fallback
+    # მთავარი article მოძებნე
     article = soup.find("article")
     if not article:
         for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
             article = soup.find("div", class_=cls)
             if article:
                 break
+
     if not article:
         article = soup.body
 
-    # არასასურველი ბლოკები
+    # ❌ წაშლის selectors – აქ შეგიძლია დაამატო რაც არ გინდა
     remove_selectors = [
         "ul.entry-meta",           # ავტორი + თარიღი
         "div.entry-tags",          # tags
@@ -63,7 +37,32 @@ def extract_blog_content(html: str):
         for tag in article.select(sel):
             tag.decompose()
 
-    return clean_html(article)
+    return article
+
+def clean_html(soup):
+    # წაშლის <style> და <script>
+    for tag in soup(["style", "script"]):
+        tag.decompose()
+
+    for tag in soup.find_all(True):
+        if tag.name == "a":
+            # მოვაშოროთ href, მაგრამ ტექსტი/შიდა ელემენტები დარჩეს
+            if "href" in tag.attrs:
+                del tag.attrs["href"]
+
+        elif tag.name == "img":
+            # დავტოვოთ მხოლოდ src და alt
+            src = tag.get("src")
+            alt = tag.get("alt", "").strip() or "Image"
+            tag.attrs = {"src": src, "alt": alt}
+
+        else:
+            # class, id, style და სხვა ზედმეტი ატრიბუტების წაშლა
+            for attr in list(tag.attrs.keys()):
+                if attr not in ["src", "alt"]:  # სურათის შემთხვევაში დავტოვებთ
+                    del tag.attrs[attr]
+
+    return soup
 
 @app.route("/scrape-blog", methods=["POST"])
 def scrape_blog():
@@ -80,7 +79,10 @@ def scrape_blog():
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        clean_html_str = str(article).strip()
+        # გაწმენდა
+        clean_article = clean_html(article)
+
+        clean_html_str = str(clean_article).strip()
         return Response(clean_html_str, mimetype="text/html")
 
     except Exception as e:
