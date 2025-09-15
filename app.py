@@ -9,13 +9,30 @@ app = Flask(__name__)
 
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
+
     article = soup.find("article")
     if not article:
         for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
             article = soup.find("div", class_=cls)
             if article:
                 break
+
     content = article if article else soup.body
+
+    # არასასურველი ბლოკების წაშლა
+    for selector in [
+        ".author-box",
+        ".entry-tags",
+        ".ct-share-box",
+        ".post-navigation",
+        "nav",
+        "footer",
+        ".sidebar",
+        ".comments"
+    ]:
+        for tag in content.select(selector):
+            tag.decompose()
+
     return content
 
 @app.route("/scrape-blog", methods=["POST"])
@@ -26,7 +43,8 @@ def scrape_blog():
         if not url:
             return jsonify({"error": "Missing 'url' field"}), 400
 
-        resp = requests.get(url, timeout=20)
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Bot/1.0)"}
+        resp = requests.get(url, headers=headers, timeout=20)
         resp.raise_for_status()
 
         soup = extract_blog_content(resp.text)
@@ -36,7 +54,11 @@ def scrape_blog():
         clean_html = str(soup)
         images = [img.get("src") for img in soup.find_all("img") if img.get("src")]
 
-        return jsonify({"html": clean_html.strip(), "images": images})
+        return jsonify({
+            "html": clean_html.strip(),
+            "images": images
+        })
+
     except Exception as e:
         logging.exception("Error scraping blog")
         return jsonify({"error": str(e)}), 500
