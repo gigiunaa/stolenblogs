@@ -4,9 +4,15 @@ import requests
 from flask import Flask, request, jsonify, Response
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+import html
+import language_tool_python
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
+
+# Grammar correction tool (English)
+tool = language_tool_python.LanguageTool('en-US')
+
 
 def clean_html(soup):
     # წაშლის <style>, <script>, <svg>, <noscript>
@@ -47,8 +53,9 @@ def clean_html(soup):
 
     return soup
 
-def extract_blog_content(html: str):
-    soup = BeautifulSoup(html, "html.parser")
+
+def extract_blog_content(html_text: str):
+    soup = BeautifulSoup(html_text, "html.parser")
 
     article = soup.find("article")
     if not article:
@@ -76,6 +83,7 @@ def extract_blog_content(html: str):
 
     return clean_html(article)
 
+
 def extract_images(article, base_url):
     images = []
     for img in article.find_all("img"):
@@ -86,6 +94,7 @@ def extract_images(article, base_url):
         filename = os.path.basename(full_url.split("?")[0])
         images.append({"url": full_url, "filename": filename})
     return images
+
 
 @app.route("/scrape-blog", methods=["POST"])
 def scrape_blog():
@@ -102,7 +111,19 @@ def scrape_blog():
         if not article:
             return Response("Could not extract blog content", status=422)
 
+        # HTML string
         html_str = str(article).strip()
+        html_str = html_str.replace(u"\u00a0", " ")   # NBSP fix
+        html_str = html.unescape(html_str)            # decode &amp;, &#39;
+
+        # Grammar correction (optional – heavy for big texts)
+        soup = BeautifulSoup(html_str, "html.parser")
+        for tag in soup.find_all(text=True):
+            fixed = tool.correct(tag)
+            if fixed != tag:
+                tag.replace_with(fixed)
+        html_str = str(soup)
+
         images = extract_images(article, url)
 
         return jsonify({
@@ -113,6 +134,7 @@ def scrape_blog():
     except Exception as e:
         logging.exception("Error scraping blog")
         return Response(f"Error: {str(e)}", status=500)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
