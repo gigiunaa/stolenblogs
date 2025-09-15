@@ -8,15 +8,14 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
 def clean_html(soup):
-    # წაშლის <style> და <script>
-    for tag in soup(["style", "script"]):
+    # წაშლის <style>, <script>, <svg>
+    for tag in soup(["style", "script", "svg"]):
         tag.decompose()
 
     # base64 img → noscript fallback
     for img in soup.find_all("img"):
         src = img.get("src", "")
         if src.startswith("data:image"):
-            # მოძებნე noscript შიგნით <img>
             noscript = img.find_next_sibling("noscript")
             if noscript:
                 ns_img = noscript.find("img")
@@ -76,7 +75,7 @@ def extract_blog_content(html: str):
         for tag in article.select(sel):
             tag.decompose()
 
-    # გაწმენდა (სტილი, base64 სურათები და ა.შ.)
+    # გაწმენდა (სტილი, base64 სურათები, svg და ა.შ.)
     article = clean_html(article)
 
     return article
