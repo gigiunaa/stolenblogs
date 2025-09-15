@@ -9,14 +9,31 @@ app = Flask(__name__)
 
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
+
+    # მოძებნე მთავარი article
     article = soup.find("article")
     if not article:
         for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
             article = soup.find("div", class_=cls)
             if article:
                 break
-    content = article if article else soup.body
-    return content
+
+    if not article:
+        return None
+
+    # ❌ წაშალე არასასურველი ბლოკები
+    remove_selectors = [
+        "div.wp-block-buttons",    # CTA buttons
+        "div.entry-tags",          # Tags
+        "div.ct-share-box",        # Share box
+        "div.author-box",          # Author box
+        "nav.post-navigation"      # Next/Prev navigation
+    ]
+    for sel in remove_selectors:
+        for tag in article.select(sel):
+            tag.decompose()
+
+    return article
 
 @app.route("/scrape-blog", methods=["POST"])
 def scrape_blog():
@@ -34,8 +51,6 @@ def scrape_blog():
             return Response("Could not extract blog content", status=422)
 
         clean_html = str(soup).strip()
-
-        # ❗ დააბრუნე პირდაპირ HTML
         return Response(clean_html, mimetype="text/html")
 
     except Exception as e:
