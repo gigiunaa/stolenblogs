@@ -1,7 +1,7 @@
 import os
 import logging
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
 from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
@@ -9,30 +9,13 @@ app = Flask(__name__)
 
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
-
     article = soup.find("article")
     if not article:
         for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
             article = soup.find("div", class_=cls)
             if article:
                 break
-
     content = article if article else soup.body
-
-    # არასასურველი ბლოკების წაშლა
-    for selector in [
-        ".author-box",
-        ".entry-tags",
-        ".ct-share-box",
-        ".post-navigation",
-        "nav",
-        "footer",
-        ".sidebar",
-        ".comments"
-    ]:
-        for tag in content.select(selector):
-            tag.decompose()
-
     return content
 
 @app.route("/scrape-blog", methods=["POST"])
@@ -41,27 +24,23 @@ def scrape_blog():
         data = request.get_json(force=True)
         url = data.get("url")
         if not url:
-            return jsonify({"error": "Missing 'url' field"}), 400
+            return Response("Missing 'url' field", status=400)
 
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; Bot/1.0)"}
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = requests.get(url, timeout=20)
         resp.raise_for_status()
 
         soup = extract_blog_content(resp.text)
         if not soup:
-            return jsonify({"error": "Could not extract blog content"}), 422
+            return Response("Could not extract blog content", status=422)
 
-        clean_html = str(soup)
-        images = [img.get("src") for img in soup.find_all("img") if img.get("src")]
+        clean_html = str(soup).strip()
 
-        return jsonify({
-            "html": clean_html.strip(),
-            "images": images
-        })
+        # ❗ დააბრუნე პირდაპირ HTML
+        return Response(clean_html, mimetype="text/html")
 
     except Exception as e:
         logging.exception("Error scraping blog")
-        return jsonify({"error": str(e)}), 500
+        return Response(f"Error: {str(e)}", status=500)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
