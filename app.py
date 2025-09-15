@@ -10,7 +10,7 @@ app = Flask(__name__)
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
 
-    # მოძებნე მთავარი article
+    # მთავარი article მოძებნე
     article = soup.find("article")
     if not article:
         for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
@@ -19,20 +19,25 @@ def extract_blog_content(html: str):
                 break
 
     if not article:
-        return None
+        article = soup.body
 
-    # ❌ წაშალე არასასურველი ბლოკები
+    # ❌ წაშლის selectors – აქ შეგიძლია დაამატო რაც არ გინდა
     remove_selectors = [
-        "div.wp-block-buttons",    # CTA buttons
-        "div.entry-tags",          # Tags
-        "div.ct-share-box",        # Share box
-        "div.author-box",          # Author box
-        "nav.post-navigation"      # Next/Prev navigation
+        "ul.entry-meta",           # ავტორი + თარიღი
+        "div.entry-tags",          # tags
+        "div.ct-share-box",        # share
+        "div.author-box",          # author bio
+        "nav.post-navigation",     # next/prev
+        "div.wp-block-buttons",    # CTA
+        "aside",                   # side widgets
+        "header .entry-meta",      # header meta
+        "footer"                   # footer
     ]
     for sel in remove_selectors:
         for tag in article.select(sel):
             tag.decompose()
 
+    # დარჩება სუფთა ბლოგის ბირთვი
     return article
 
 @app.route("/scrape-blog", methods=["POST"])
@@ -43,14 +48,14 @@ def scrape_blog():
         if not url:
             return Response("Missing 'url' field", status=400)
 
-        resp = requests.get(url, timeout=20)
+        resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
 
-        soup = extract_blog_content(resp.text)
-        if not soup:
+        article = extract_blog_content(resp.text)
+        if not article:
             return Response("Could not extract blog content", status=422)
 
-        clean_html = str(soup).strip()
+        clean_html = str(article).strip()
         return Response(clean_html, mimetype="text/html")
 
     except Exception as e:
