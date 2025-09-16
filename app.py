@@ -1,40 +1,58 @@
 import os
+import re
 import logging
 import requests
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
+CORS(app)  # საშუალებას აძლევს ნებისმიერ Origin-ს
+
+def extract_images(soup, image_urls):
+    # <img> ტეგები
+    for img in soup.find_all("img"):
+        src = (
+            img.get("src")
+            or img.get("data-src")
+            or img.get("data-lazy")
+            or img.get("data-original")
+        )
+        if not src:
+            continue
+        alt = img.get("alt", "").strip() or "Image"
+        img.attrs = {"src": src, "alt": alt}
+        if src.startswith("http"):
+            image_urls.add(src)
+
+    # background-image style-დან
+    for div in soup.find_all(style=True):
+        style = div["style"]
+        m = re.search(r"url\((.*?)\)", style)
+        if m:
+            url = m.group(1).strip("\"' ")
+            if url.startswith("http"):
+                image_urls.add(url)
+
+    return image_urls
 
 def clean_html(soup, image_urls):
-    # წაშლის <style>, <script>, <svg>, <noscript>
-    for tag in soup(["style", "script", "svg", "noscript"]):
+    # წაშლის script, style, noscript
+    for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
 
-    # base64 img → ამოშლა
-    for img in soup.find_all("img"):
-        src = img.get("src", "")
-        if not src:
-            img.decompose()
-            continue
+    # სურათების დამუშავება
+    extract_images(soup, image_urls)
 
-        if src.startswith("data:image"):
-            img.decompose()
-        else:
-            alt = img.get("alt", "").strip() or "Image"
-            img.attrs = {"src": src, "alt": alt}
-            if src.startswith("http"):
-                image_urls.add(src)
+    # <a> ბმულებიდან href წაიშლება
+    for a in soup.find_all("a"):
+        if "href" in a.attrs:
+            del a.attrs["href"]
 
-    # ლინკების გაწმენდა
-    for tag in soup.find_all("a"):
-        if "href" in tag.attrs:
-            del tag.attrs["href"]
-
-    # სხვა ტეგების გაწმენდა
+    # ყველა სხვა ტეგს ვუტოვებთ მხოლოდ src/alt თუ აქვს
     for tag in soup.find_all(True):
-        if tag.name not in ["img"]:
+        if tag.name != "img":
             for attr in list(tag.attrs.keys()):
                 if attr not in ["src", "alt"]:
                     del tag.attrs[attr]
@@ -53,7 +71,7 @@ def extract_blog_content(html: str):
             title = el.get_text(strip=True)
             break
 
-    # მთავარი კონტენტი
+    # მთავარი article
     article = None
     candidates = [
         "article",
@@ -74,16 +92,9 @@ def extract_blog_content(html: str):
 
     # ზედმეტი ელემენტების წაშლა
     remove_selectors = [
-        "aside",
-        "nav",
-        "footer",
-        "header",
-        "form",
-        "button",
-        ".share",
-        ".tags",
-        ".author",
-        ".related",
+        "aside", "nav", "footer", "header",
+        "form", "button", ".share", ".tags",
+        ".author", ".related"
     ]
     for sel in remove_selectors:
         for tag in article.select(sel):
