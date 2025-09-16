@@ -1,96 +1,102 @@
 import os
 import logging
 import requests
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-import html
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
-
-def clean_html(soup):
+def clean_html(soup, image_urls):
     # წაშლის <style>, <script>, <svg>, <noscript>
     for tag in soup(["style", "script", "svg", "noscript"]):
         tag.decompose()
 
-    # base64 img → ამოვშალოთ
+    # base64 img → ამოშლა
     for img in soup.find_all("img"):
         src = img.get("src", "")
+        if not src:
+            img.decompose()
+            continue
+
         if src.startswith("data:image"):
             img.decompose()
-
-    # ატრიბუტების გაწმენდა
-    for tag in soup.find_all(True):
-        if tag.name == "a":
-            if "href" in tag.attrs:
-                del tag.attrs["href"]
-
-        elif tag.name == "img":
-            src = tag.get("src")
-            alt = tag.get("alt", "").strip() or "Image"
-            tag.attrs = {"src": src, "alt": alt}
-
         else:
+            alt = img.get("alt", "").strip() or "Image"
+            img.attrs = {"src": src, "alt": alt}
+            if src.startswith("http"):
+                image_urls.add(src)
+
+    # ლინკების გაწმენდა
+    for tag in soup.find_all("a"):
+        if "href" in tag.attrs:
+            del tag.attrs["href"]
+
+    # სხვა ტეგების გაწმენდა
+    for tag in soup.find_all(True):
+        if tag.name not in ["img"]:
             for attr in list(tag.attrs.keys()):
                 if attr not in ["src", "alt"]:
                     del tag.attrs[attr]
 
-    # wrapper <div>-ების მოცილება
-    for div in soup.find_all("div"):
-        if not div.attrs and len(div.contents) == 1:
-            div.unwrap()
-        elif not div.attrs and not div.get_text(strip=True) and not div.find("img"):
-            div.decompose()
-
-    for div in soup.find_all("div"):
-        div.unwrap()
-
     return soup
 
+def extract_blog_content(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+    image_urls = set()
 
-def extract_blog_content(html_text: str):
-    soup = BeautifulSoup(html_text, "html.parser")
+    # სათაური მოძებნე
+    title = None
+    for t in ["h1", "h2", "title"]:
+        el = soup.find(t)
+        if el and el.get_text(strip=True):
+            title = el.get_text(strip=True)
+            break
 
-    article = soup.find("article")
+    # მთავარი კონტენტი
+    article = None
+    candidates = [
+        "article",
+        "div[class*='content']",
+        "div[class*='entry']",
+        "div[class*='post']",
+        "div[class*='blog']",
+        "main"
+    ]
+    for sel in candidates:
+        el = soup.select_one(sel)
+        if el and len(el.get_text(strip=True)) > 200:
+            article = el
+            break
+
     if not article:
-        for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
-            article = soup.find("div", class_=cls)
-            if article:
-                break
-    if not article:
-        article = soup.body
+        article = soup.body or soup
 
+    # ზედმეტი ელემენტების წაშლა
     remove_selectors = [
-        "ul.entry-meta",
-        "div.entry-tags",
-        "div.ct-share-box",
-        "div.author-box",
-        "nav.post-navigation",
-        "div.wp-block-buttons",
         "aside",
-        "header .entry-meta",
-        "footer"
+        "nav",
+        "footer",
+        "header",
+        "form",
+        "button",
+        ".share",
+        ".tags",
+        ".author",
+        ".related",
     ]
     for sel in remove_selectors:
         for tag in article.select(sel):
             tag.decompose()
 
-    return clean_html(article)
+    # გაწმენდა
+    article = clean_html(article, image_urls)
 
-
-def extract_images(article, base_url):
-    images = []
-    for img in article.find_all("img"):
-        src = img.get("src")
-        if not src:
-            continue
-        full_url = urljoin(base_url, src)
-        filename = os.path.basename(full_url.split("?")[0])
-        images.append({"url": full_url, "filename": filename})
-    return images
-
+    return {
+        "title": title or "Untitled",
+        "content_html": str(article).strip(),
+        "images": list(image_urls)
+    }
 
 @app.route("/scrape-blog", methods=["POST"])
 def scrape_blog():
@@ -98,31 +104,17 @@ def scrape_blog():
         data = request.get_json(force=True)
         url = data.get("url")
         if not url:
-            return Response("Missing 'url' field", status=400)
+            return jsonify({"error": "Missing 'url' field"}), 400
 
         resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
 
-        article = extract_blog_content(resp.text)
-        if not article:
-            return Response("Could not extract blog content", status=422)
-
-        # HTML string გაწმენდილი
-        html_str = str(article).strip()
-        html_str = html_str.replace(u"\u00a0", " ")  # NBSP fix
-        html_str = html.unescape(html_str)           # decode &amp;, &#39; etc.
-
-        images = extract_images(article, url)
-
-        return jsonify({
-            "html": html_str,
-            "images": images
-        })
+        result = extract_blog_content(resp.text)
+        return jsonify(result)
 
     except Exception as e:
         logging.exception("Error scraping blog")
-        return Response(f"Error: {str(e)}", status=500)
-
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
