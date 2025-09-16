@@ -3,54 +3,68 @@ import re
 import logging
 import requests
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
-CORS(app)  # საშუალებას აძლევს ნებისმიერ Origin-ს
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
 
 def extract_images(soup, image_urls):
-    # <img> ტეგები
+    # --- img tag variations ---
     for img in soup.find_all("img"):
         src = (
             img.get("src")
             or img.get("data-src")
             or img.get("data-lazy")
             or img.get("data-original")
+            or img.get("data-background")
         )
+        # srcset-ის დამუშავება
+        if not src and img.get("srcset"):
+            src = img["srcset"].split(",")[0].split()[0]
+
         if not src:
             continue
-        alt = img.get("alt", "").strip() or "Image"
-        img.attrs = {"src": src, "alt": alt}
+
+        if src.startswith("//"):
+            src = "https:" + src
         if src.startswith("http"):
             image_urls.add(src)
 
-    # background-image style-დან
+        alt = img.get("alt", "").strip() or "Image"
+        img.attrs = {"src": src, "alt": alt}
+
+    # --- background-image inline style ---
     for div in soup.find_all(style=True):
         style = div["style"]
         m = re.search(r"url\((.*?)\)", style)
         if m:
             url = m.group(1).strip("\"' ")
+            if url.startswith("//"):
+                url = "https:" + url
             if url.startswith("http"):
                 image_urls.add(url)
 
     return image_urls
 
 def clean_html(soup, image_urls):
-    # წაშლის script, style, noscript
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
 
-    # სურათების დამუშავება
     extract_images(soup, image_urls)
 
-    # <a> ბმულებიდან href წაიშლება
+    # <a> → href წაშლა
     for a in soup.find_all("a"):
         if "href" in a.attrs:
             del a.attrs["href"]
 
-    # ყველა სხვა ტეგს ვუტოვებთ მხოლოდ src/alt თუ აქვს
+    # სხვა ტეგების ატრიბუტების გაწმენდა
     for tag in soup.find_all(True):
         if tag.name != "img":
             for attr in list(tag.attrs.keys()):
@@ -63,7 +77,7 @@ def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
     image_urls = set()
 
-    # სათაური მოძებნე
+    # სათაური
     title = None
     for t in ["h1", "h2", "title"]:
         el = soup.find(t)
@@ -71,7 +85,7 @@ def extract_blog_content(html: str):
             title = el.get_text(strip=True)
             break
 
-    # მთავარი article
+    # მთავარი article/content
     article = None
     candidates = [
         "article",
@@ -90,7 +104,7 @@ def extract_blog_content(html: str):
     if not article:
         article = soup.body or soup
 
-    # ზედმეტი ელემენტების წაშლა
+    # ზედმეტის წაშლა
     remove_selectors = [
         "aside", "nav", "footer", "header",
         "form", "button", ".share", ".tags",
@@ -100,7 +114,6 @@ def extract_blog_content(html: str):
         for tag in article.select(sel):
             tag.decompose()
 
-    # გაწმენდა
     article = clean_html(article, image_urls)
 
     return {
