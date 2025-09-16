@@ -1,4 +1,4 @@
-# blog_scraper.py
+# blog_scraper_clean.py
 # -*- coding: utf-8 -*-
 
 import os
@@ -15,22 +15,12 @@ app = Flask(__name__)
 CORS(app)
 
 # ------------------------------
-# Helper: გაწმენდა
-# ------------------------------
-def clean_html(soup):
-    # წაშლის <style>, <script>
-    for tag in soup(["style", "script", "svg", "noscript"]):
-        tag.decompose()
-
-    return soup
-
-# ------------------------------
-# Helper: ამოიღოს სურათები
+# Helper: სურათების ამოღება
 # ------------------------------
 def extract_images(soup):
     image_urls = set()
 
-    # 1. <img> + lazy attributes + srcset
+    # <img> + lazy attributes + srcset
     for img in soup.find_all("img"):
         src = (
             img.get("src")
@@ -41,14 +31,13 @@ def extract_images(soup):
         )
         if not src and img.get("srcset"):
             src = img["srcset"].split(",")[0].split()[0]
-
         if src:
             if src.startswith("//"):
                 src = "https:" + src
             if src.startswith(("http://", "https://")):
                 image_urls.add(src)
 
-    # 2. <source srcset="..."> (მაგ. <picture>)
+    # <source srcset="...">
     for source in soup.find_all("source"):
         srcset = source.get("srcset")
         if srcset:
@@ -58,7 +47,7 @@ def extract_images(soup):
             if first.startswith(("http://", "https://")):
                 image_urls.add(first)
 
-    # 3. style="background-image:url(...)"
+    # style="background-image:url(...)"
     for tag in soup.find_all(style=True):
         style = tag["style"]
         for match in re.findall(r"url\((.*?)\)", style):
@@ -71,7 +60,33 @@ def extract_images(soup):
     return list(image_urls)
 
 # ------------------------------
-# Helper: ამოიღოს article
+# Helper: HTML გაწმენდა
+# ------------------------------
+def clean_article(article):
+    # წაშალე script/style/svg/noscript
+    for tag in article(["script", "style", "svg", "noscript"]):
+        tag.decompose()
+
+    # გაასუფთავე ატრიბუტები
+    for tag in article.find_all(True):
+        # მარტო სასარგებლო ტეგები დავტოვოთ
+        if tag.name not in ["p", "h1", "h2", "h3", "ul", "ol", "li", "img", "strong", "em", "b", "i", "a"]:
+            tag.unwrap()
+            continue
+
+        # img -> მარტო src და alt
+        if tag.name == "img":
+            src = tag.get("src", "")
+            alt = tag.get("alt", "").strip() or "Image"
+            tag.attrs = {"src": src, "alt": alt}
+        # სხვა ტეგებიდან ყველა class/id/data-* წავშალოთ
+        else:
+            tag.attrs = {}
+
+    return article
+
+# ------------------------------
+# Blog content extraction
 # ------------------------------
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
@@ -79,43 +94,17 @@ def extract_blog_content(html: str):
     # მთავარი article მოძებნე
     article = soup.find("article")
     if not article:
-        for cls in [
-            "blog-content",
-            "post-content",
-            "entry-content",
-            "content",
-            "article-body",
-        ]:
+        for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
             article = soup.find("div", class_=cls)
             if article:
                 break
-
     if not article:
         article = soup.body
 
-    # წასაშლელი selectors
-    remove_selectors = [
-        "ul.entry-meta",
-        "div.entry-tags",
-        "div.ct-share-box",
-        "div.author-box",
-        "nav.post-navigation",
-        "div.wp-block-buttons",
-        "aside",
-        "header .entry-meta",
-        "footer",
-    ]
-    for sel in remove_selectors:
-        for tag in article.select(sel):
-            tag.decompose()
-
-    # გაწმენდა
-    article = clean_html(article)
-
-    return article
+    return clean_article(article)
 
 # ------------------------------
-# API route
+# API
 # ------------------------------
 @app.route("/scrape-blog", methods=["POST"])
 def scrape_blog():
@@ -130,7 +119,7 @@ def scrape_blog():
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # სათაური
+        # title
         title = None
         if soup.title:
             title = soup.title.string.strip()
@@ -138,12 +127,12 @@ def scrape_blog():
         if h1 and not title:
             title = h1.get_text(strip=True)
 
-        # ბლოგის კონტენტი
+        # blog content
         article = extract_blog_content(resp.text)
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # სურათები
+        # images
         images = extract_images(soup)
 
         result = {
@@ -151,7 +140,6 @@ def scrape_blog():
             "content_html": str(article).strip(),
             "images": images,
         }
-
         return Response(json.dumps(result, ensure_ascii=False), mimetype="application/json")
 
     except Exception as e:
