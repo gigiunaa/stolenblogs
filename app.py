@@ -67,28 +67,33 @@ def clean_article(article):
     for tag in article(["script", "style", "svg", "noscript"]):
         tag.decompose()
 
-    # background-image → <img>
-    for tag in article.find_all(style=True):
-        style = tag["style"]
-        match = re.search(r'background-image\s*:\s*url\((.*?)\)', style)
-        if match:
-            url = match.group(1).strip("\"' ")
-            if url.startswith("//"):
-                url = "https:" + url
-            if url.startswith(("http://", "https://")):
-                img_tag = article.new_tag("img", src=url, alt="Image")
-                tag.append(img_tag)
-
     # გაასუფთავე ატრიბუტები
     for tag in article.find_all(True):
-        if tag.name not in ["p", "h1", "h2", "h3", "ul", "ol", "li", "img", "strong", "em", "b", "i", "a"]:
+        # მარტო სასარგებლო ტეგები დავტოვოთ
+        if tag.name not in ["p", "h1", "h2", "h3", "ul", "ol", "li",
+                            "img", "strong", "em", "b", "i", "a"]:
             tag.unwrap()
             continue
 
+        # img -> გაასუფთავე და ჩასვი სწორი src + alt
         if tag.name == "img":
-            src = tag.get("src", "")
+            src = (
+                tag.get("src")
+                or tag.get("data-src")
+                or tag.get("data-lazy-src")
+                or tag.get("data-original")
+                or tag.get("data-background")
+            )
+            if not src and tag.get("srcset"):
+                src = tag["srcset"].split(",")[0].split()[0]
+
+            if src and src.startswith("//"):
+                src = "https:" + src
+
             alt = tag.get("alt", "").strip() or "Image"
-            tag.attrs = {"src": src, "alt": alt}
+            tag.attrs = {"src": src or "", "alt": alt}
+
+        # სხვა ტეგებიდან ყველა class/id/data-* წავშალოთ
         else:
             tag.attrs = {}
 
