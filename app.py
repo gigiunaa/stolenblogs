@@ -148,11 +148,13 @@ def scrape_blog():
 
         # images
         images = extract_images(soup)
+        image_names = [f"image{i+1}.png" for i in range(len(images))]
 
         result = {
             "title": title or "",
             "content_html": str(article).strip(),
             "images": images,
+            "image_names": image_names,
         }
         return Response(json.dumps(result, ensure_ascii=False), mimetype="application/json")
 
