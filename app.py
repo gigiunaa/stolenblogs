@@ -69,14 +69,13 @@ def clean_article(article):
 
     # გაასუფთავე ატრიბუტები
     for tag in article.find_all(True):
-        if tag.name not in [
-            "p", "h1", "h2", "h3", "ul", "ol", "li",
-            "img", "strong", "em", "b", "i", "a"
-        ]:
+        # მარტო სასარგებლო ტეგები დავტოვოთ
+        if tag.name not in ["p", "h1", "h2", "h3", "ul", "ol", "li",
+                            "img", "strong", "em", "b", "i", "a"]:
             tag.unwrap()
             continue
 
-        # img -> გაასუფთავე src + alt
+        # img -> გაასუფთავე და ჩასვი სწორი src + alt
         if tag.name == "img":
             src = (
                 tag.get("src")
@@ -87,11 +86,14 @@ def clean_article(article):
             )
             if not src and tag.get("srcset"):
                 src = tag["srcset"].split(",")[0].split()[0]
+
             if src and src.startswith("//"):
                 src = "https:" + src
 
             alt = tag.get("alt", "").strip() or "Image"
             tag.attrs = {"src": src or "", "alt": alt}
+
+        # სხვა ტეგებიდან ყველა class/id/data-* წავშალოთ
         else:
             tag.attrs = {}
 
@@ -113,18 +115,7 @@ def extract_blog_content(html: str):
     if not article:
         article = soup.body
 
-    cleaned = clean_article(article)
-
-    # ვეძებთ პირველ <h1> ან <h2>
-    first_header = cleaned.find(["h1", "h2"])
-    if first_header:
-        # ვაბრუნებთ მხოლოდ ამ ჰედერიდან ბოლომდე
-        parts = []
-        for elem in first_header.find_all_next():
-            parts.append(str(elem))
-        return "".join([str(first_header)] + parts)
-    else:
-        return str(cleaned)
+    return clean_article(article)
 
 # ------------------------------
 # API
@@ -151,8 +142,8 @@ def scrape_blog():
             title = h1.get_text(strip=True)
 
         # blog content
-        article_html = extract_blog_content(resp.text)
-        if not article_html:
+        article = extract_blog_content(resp.text)
+        if not article:
             return Response("Could not extract blog content", status=422)
 
         # images
@@ -161,7 +152,7 @@ def scrape_blog():
 
         result = {
             "title": title or "",
-            "content_html": article_html.strip(),
+            "content_html": str(article).strip(),
             "images": images,
             "image_names": image_names,
         }
