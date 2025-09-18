@@ -17,11 +17,11 @@ CORS(app)
 # ------------------------------
 # Helper: სურათების ამოღება
 # ------------------------------
-def extract_images(soup):
+def extract_images(container):
     image_urls = set()
 
     # <img> + lazy attributes + srcset
-    for img in soup.find_all("img"):
+    for img in container.find_all("img"):
         src = (
             img.get("src")
             or img.get("data-src")
@@ -38,7 +38,7 @@ def extract_images(soup):
                 image_urls.add(src)
 
     # <source srcset="...">
-    for source in soup.find_all("source"):
+    for source in container.find_all("source"):
         srcset = source.get("srcset")
         if srcset:
             first = srcset.split(",")[0].split()[0]
@@ -48,7 +48,7 @@ def extract_images(soup):
                 image_urls.add(first)
 
     # style="background-image:url(...)"
-    for tag in soup.find_all(style=True):
+    for tag in container.find_all(style=True):
         style = tag["style"]
         for match in re.findall(r"url\((.*?)\)", style):
             url = match.strip("\"' ")
@@ -146,8 +146,8 @@ def scrape_blog():
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # images
-        images = extract_images(soup)
+        # images -> მხოლოდ სტატიის შიგნით
+        images = extract_images(article)
         image_names = [f"image{i+1}.png" for i in range(len(images))]
 
         result = {
