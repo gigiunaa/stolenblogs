@@ -97,9 +97,16 @@ def clean_article(article):
 # ------------------------------
 # Blog content extraction
 # ------------------------------
-def extract_blog_content(html: str):
+def extract_blog_content(html: str, base_url=None):
     soup = BeautifulSoup(html, "html.parser")
 
+    # Safeguard Global სპეციფიკური container
+    if base_url and "safeguardglobal.com" in base_url:
+        article = soup.find("div", class_="flex flex-col items-start justify-start gap-10 self-stretch lg:w-2/3 lg:py-0")
+        if article:
+            return clean_article(article)
+
+    # Default case
     article = soup.find("article")
     if not article:
         for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
@@ -122,7 +129,6 @@ def scrape_blog():
         if not url:
             return Response("Missing 'url' field", status=400)
 
-        # დამატებული headers anti-403 bypass-ისთვის
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -149,11 +155,11 @@ def scrape_blog():
             title = h1.get_text(strip=True)
 
         # blog content
-        article = extract_blog_content(resp.text)
+        article = extract_blog_content(resp.text, base_url=url)
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # images მხოლოდ სტატიის შიგნით
+        # images მხოლოდ სტატიაში
         images = extract_images(article)
         image_names = [f"image{i+1}.png" for i in range(len(images))]
 
