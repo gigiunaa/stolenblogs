@@ -17,11 +17,11 @@ CORS(app)
 # ------------------------------
 # Helper: სურათების ამოღება
 # ------------------------------
-def extract_images(container):
+def extract_images(soup):
     image_urls = set()
 
     # <img> + lazy attributes + srcset
-    for img in container.find_all("img"):
+    for img in soup.find_all("img"):
         src = (
             img.get("src")
             or img.get("data-src")
@@ -38,7 +38,7 @@ def extract_images(container):
                 image_urls.add(src)
 
     # <source srcset="...">
-    for source in container.find_all("source"):
+    for source in soup.find_all("source"):
         srcset = source.get("srcset")
         if srcset:
             first = srcset.split(",")[0].split()[0]
@@ -48,7 +48,7 @@ def extract_images(container):
                 image_urls.add(first)
 
     # style="background-image:url(...)"
-    for tag in container.find_all(style=True):
+    for tag in soup.find_all(style=True):
         style = tag["style"]
         for match in re.findall(r"url\((.*?)\)", style):
             url = match.strip("\"' ")
@@ -69,11 +69,13 @@ def clean_article(article):
 
     # გაასუფთავე ატრიბუტები
     for tag in article.find_all(True):
+        # მარტო სასარგებლო ტეგები დავტოვოთ
         if tag.name not in ["p", "h1", "h2", "h3", "ul", "ol", "li",
                             "img", "strong", "em", "b", "i", "a"]:
             tag.unwrap()
             continue
 
+        # img -> გაასუფთავე და ჩასვი სწორი src + alt
         if tag.name == "img":
             src = (
                 tag.get("src")
@@ -84,11 +86,14 @@ def clean_article(article):
             )
             if not src and tag.get("srcset"):
                 src = tag["srcset"].split(",")[0].split()[0]
+
             if src and src.startswith("//"):
                 src = "https:" + src
 
             alt = tag.get("alt", "").strip() or "Image"
             tag.attrs = {"src": src or "", "alt": alt}
+
+        # სხვა ტეგებიდან ყველა class/id/data-* წავშალოთ
         else:
             tag.attrs = {}
 
@@ -97,16 +102,10 @@ def clean_article(article):
 # ------------------------------
 # Blog content extraction
 # ------------------------------
-def extract_blog_content(html: str, base_url=None):
+def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
 
-    # Safeguard Global სპეციფიკური container
-    if base_url and "safeguardglobal.com" in base_url:
-        article = soup.find("div", class_="flex flex-col items-start justify-start gap-10 self-stretch lg:w-2/3 lg:py-0")
-        if article:
-            return clean_article(article)
-
-    # Default case
+    # მთავარი article მოძებნე
     article = soup.find("article")
     if not article:
         for cls in ["blog-content", "post-content", "entry-content", "content", "article-body"]:
@@ -129,19 +128,7 @@ def scrape_blog():
         if not url:
             return Response("Missing 'url' field", status=400)
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.google.com/",
-            "DNT": "1",
-        }
-
-        resp = requests.get(url, timeout=20, headers=headers)
+        resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
 
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -155,19 +142,17 @@ def scrape_blog():
             title = h1.get_text(strip=True)
 
         # blog content
-        article = extract_blog_content(resp.text, base_url=url)
+        article = extract_blog_content(resp.text)
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # images მხოლოდ სტატიაში
-        images = extract_images(article)
-        image_names = [f"image{i+1}.png" for i in range(len(images))]
+        # images
+        images = extract_images(soup)
 
         result = {
             "title": title or "",
             "content_html": str(article).strip(),
             "images": images,
-            "image_names": image_names,
         }
         return Response(json.dumps(result, ensure_ascii=False), mimetype="application/json")
 
